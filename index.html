@@ -25,8 +25,11 @@
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%}
+@supports(height:100dvh){html,body{height:100dvh}}
 body{
-  background:var(--bg-0);
+  /* WebGL 不可用时的兜底背景（正常时被 canvas 覆盖） */
+  background:
+    radial-gradient(120% 95% at 50% 38%, #14332d 0%, #0a0d10 48%, #06070a 100%);
   color:var(--ink);
   font-family:"Space Grotesk","PingFang SC","Microsoft YaHei",sans-serif;
   overflow:hidden;
@@ -44,6 +47,7 @@ body{
     linear-gradient(var(--hairline) 1px, transparent 1px),
     linear-gradient(90deg, var(--hairline) 1px, transparent 1px);
   background-size:72px 72px;
+  -webkit-mask-image:radial-gradient(65% 55% at 50% 50%, #000 0%, transparent 75%);
   mask-image:radial-gradient(65% 55% at 50% 50%, #000 0%, transparent 75%);
   opacity:.45;
 }
@@ -266,6 +270,29 @@ body.leaving .transline .half{transform:scaleY(1)}
 
 /* 标题按字视差包裹 */
 .title .char{display:inline-block;will-change:transform;transition:transform .15s var(--ease-out)}
+
+/* ========= 移动端适配 ========= */
+@media (max-width:900px){
+  .top-bar,.bottom-bar{letter-spacing:.14em;font-size:10px;padding:clamp(16px,4vw,28px)}
+  .top-bar{gap:12px}
+  .top-bar .brand{gap:9px;min-width:0}
+  .top-bar .brand .mark{width:24px;height:24px;font-size:10px;flex:none}
+  .top-bar .status{flex:none}
+  .meta{font-size:10px;letter-spacing:.2em;gap:10px;margin-bottom:clamp(16px,3vw,28px);flex-wrap:wrap;justify-content:center}
+  .meta .sep{width:18px}
+  .sub{font-size:10px;letter-spacing:.18em;white-space:nowrap}
+  .sub span{margin:0 7px}
+  .title{font-size:clamp(40px,12.5vw,96px);max-width:none}
+  /* 底部进度条与底栏重叠，小屏隐藏 */
+  .progress{display:none}
+}
+@media (max-width:560px){
+  .top-bar .suffix,.top-bar .loc{display:none}
+  .meta{letter-spacing:.14em}
+  .meta .sep{display:none}
+  .bottom-bar>.hint{display:none}
+  .enter{padding:13px 22px;font-size:11px;letter-spacing:.2em;gap:10px}
+}
 </style>
 </head>
 <body>
@@ -291,11 +318,11 @@ body.leaving .transline .half{transform:scaleY(1)}
   <div class="top-bar reveal r1">
     <div class="brand">
       <span class="mark">LJ</span>
-      <span>LIU JIJIE <span style="color:var(--ink-faint)">·</span> PORTFOLIO / 2026</span>
+      <span>LIU JIJIE <span style="color:var(--ink-faint)">·</span> <span class="suffix">PORTFOLIO / 2026</span></span>
     </div>
     <div class="status">
       <span class="live"><i></i> AVAILABLE</span>
-      <span>CHINA · REMOTE</span>
+      <span class="loc">CHINA · REMOTE</span>
     </div>
   </div>
 
@@ -383,15 +410,43 @@ const pb=document.getElementById('progBar'), pt=document.getElementById('progTxt
   requestAnimationFrame(tick);
 })();
 
+/* ============ 点击进入（transline 裂幕） ============ */
+/* 先注册跳转，保证即使 WebGL 初始化失败，页面也不会变成死页 */
+let leaving=false;
+function go(){
+  if(leaving)return; leaving=true;
+  document.body.classList.add('leaving');
+  setTimeout(()=>location.href='portfolio.html', 720);
+}
+document.body.addEventListener('click',go);
+document.getElementById('enterBtn').addEventListener('click',e=>{e.stopPropagation();e.preventDefault();go()});
+
 /* ============ WebGL 着色器背景（多层金属流体 + 辉光） ============ */
+(function initBackground(){
 const canvas = document.getElementById('gl');
-const gl = canvas.getContext('webgl');
+if(!canvas) return;
+let gl=null;
+try{
+  gl = canvas.getContext('webgl',{alpha:false,antialias:false,depth:false,powerPreference:'low-power'})
+    || canvas.getContext('experimental-webgl');
+}catch(e){ gl=null; }
+if(!gl){ canvas.style.display='none'; return; }   // 回落到 body 的渐变背景
+
+/* 移动端降配：减少 fbm 层数 + 限制像素比 */
+const isSmall = innerWidth < 820 || matchMedia('(pointer:coarse)').matches;
+const OCT = isSmall ? 3 : 5;
+const MAX_DPR = isSmall ? 1.5 : 2;
+
 const vert = `
 attribute vec2 p;
 void main(){ gl_Position = vec4(p,0.,1.); }
 `;
 const frag = `
+#ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
+#else
+precision mediump float;
+#endif
 uniform vec2 uRes;
 uniform float uTime;
 uniform vec2 uMouse;
@@ -408,7 +463,7 @@ float noise(vec2 p){
 }
 float fbm(vec2 p){
   float v = 0.0, a = 0.55;
-  for(int i=0;i<5;i++){ v += a*noise(p); p = p*2.03 + vec2(3.1,1.7); a *= 0.5; }
+  for(int i=0;i<${OCT};i++){ v += a*noise(p); p = p*2.03 + vec2(3.1,1.7); a *= 0.5; }
   return v;
 }
 
@@ -443,7 +498,7 @@ void main(){
   float band2 = pow(smoothstep(0.4, 0.95, f2), 2.5);
   col += vec3(0.30, 0.88, 0.75) * band2 * 0.22;
 
-  // 层 3：鼠标附近的辉光核心
+  // 层 3：鼠标附近的辉光核心（触屏时固定在画面中心偏上）
   float dm = distance(uv, uMouse-0.5);
   float glowA = smoothstep(0.55, 0.0, dm);
   col += vec3(0.35, 0.95, 0.82) * pow(glowA, 3.5) * 0.45;
@@ -472,15 +527,29 @@ void main(){
 `;
 function makeShader(type, src){
   const s = gl.createShader(type);
+  if(!s) return null;
   gl.shaderSource(s, src);
   gl.compileShader(s);
-  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.warn(gl.getShaderInfoLog(s));
+  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
+    console.warn(gl.getShaderInfoLog(s));
+    gl.deleteShader(s);
+    return null;
+  }
   return s;
 }
+const vs = makeShader(gl.VERTEX_SHADER, vert);
+const fs = makeShader(gl.FRAGMENT_SHADER, frag);
+if(!vs || !fs){ canvas.style.display='none'; return; }  // 着色器编译失败 → 用渐变兜底
+
 const prog = gl.createProgram();
-gl.attachShader(prog, makeShader(gl.VERTEX_SHADER, vert));
-gl.attachShader(prog, makeShader(gl.FRAGMENT_SHADER, frag));
-gl.linkProgram(prog); gl.useProgram(prog);
+gl.attachShader(prog, vs);
+gl.attachShader(prog, fs);
+gl.linkProgram(prog);
+if(!gl.getProgramParameter(prog, gl.LINK_STATUS)){
+  console.warn(gl.getProgramInfoLog(prog));
+  canvas.style.display='none'; return;
+}
+gl.useProgram(prog);
 const buf = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, buf);
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
@@ -490,10 +559,14 @@ const uRes=gl.getUniformLocation(prog,'uRes'), uTime=gl.getUniformLocation(prog,
 let mxs=.5,mys=.5,tmx=.5,tmy=.5;
 addEventListener('mousemove',e=>{tmx=e.clientX/innerWidth;tmy=1-e.clientY/innerHeight});
 function resize(){
-  const dpr=Math.min(devicePixelRatio,2);
-  canvas.width=innerWidth*dpr; canvas.height=innerHeight*dpr;
+  const dpr=Math.min(devicePixelRatio,MAX_DPR);
+  canvas.width=Math.round(innerWidth*dpr); canvas.height=Math.round(innerHeight*dpr);
+  gl.viewport(0,0,canvas.width,canvas.height);
 }
 addEventListener('resize',resize); resize();
+
+/* 上下文丢失时不要让画面永久黑屏 */
+canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();canvas.style.display='none';});
 const t0=performance.now();
 (function loop(){
   mxs+=(tmx-mxs)*0.05; mys+=(tmy-mys)*0.05;
@@ -501,18 +574,10 @@ const t0=performance.now();
   gl.uniform1f(uTime,(performance.now()-t0)/1000);
   gl.uniform2f(uMouse,mxs,mys);
   gl.drawArrays(gl.TRIANGLES,0,3);
+
   requestAnimationFrame(loop);
 })();
-
-/* ============ 点击进入（transline 裂幕） ============ */
-let leaving=false;
-function go(){
-  if(leaving)return; leaving=true;
-  document.body.classList.add('leaving');
-  setTimeout(()=>location.href='portfolio.html', 720);
-}
-document.body.addEventListener('click',go);
-document.getElementById('enterBtn').addEventListener('click',e=>{e.stopPropagation();e.preventDefault();go()});
+})();
 </script>
 </body>
 </html>

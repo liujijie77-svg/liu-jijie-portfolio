@@ -1,3 +1,15 @@
+/* ========= 字体（自托管，不依赖 Google Fonts） ========= */
+@font-face{
+  font-family:"Space Grotesk";
+  src:url("assets/fonts/space-grotesk-400.woff2") format("woff2");
+  font-weight:400;font-style:normal;font-display:swap;
+}
+@font-face{
+  font-family:"Space Grotesk";
+  src:url("assets/fonts/space-grotesk-500.woff2") format("woff2");
+  font-weight:500;font-style:normal;font-display:swap;
+}
+
 /* ============ 设计规范 Design Tokens ============ */
 :root{
   /* 色彩 */
